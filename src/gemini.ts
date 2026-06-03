@@ -12,7 +12,7 @@ import type { TokenMarket } from "./market.js";
 const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 
 export type Tone = "hype" | "degen" | "professional" | "ct" | "reply";
-export type Lang = "en" | "id";
+export type Lang = "en" | "id" | "zh";
 
 export interface PostOptions {
   tone?: Tone;
@@ -82,7 +82,15 @@ export async function generatePost(
     ? `- Include 2-4 RELEVANT hashtags: the ticker (#${m.symbol}), the chain, and broad crypto tags (e.g. #crypto #DeFi #memecoin) only if they fit. No spammy hashtag walls.`
     : "- Do NOT use any hashtags.";
 
+  const langName =
+    language === "id"
+      ? "Bahasa Indonesia"
+      : language === "zh"
+        ? "Chinese (简体中文)"
+        : "English";
+
   const rules = [
+    `OUTPUT LANGUAGE: Write the ENTIRE post in ${langName}. Every word must be in ${langName}, EXCEPT the token ticker ($${m.symbol}) and hashtags. This rule overrides all others.`,
     `You write content for X/Twitter about a crypto token. Voice: ${TONE_GUIDE[tone]}`,
     "HARD RULES:",
     "- Use ONLY the numbers in DATA. Never invent price, partnerships, exchange listings, roadmap, audits, or holder counts.",
@@ -92,8 +100,7 @@ export async function generatePost(
       : "- Aim for 180-250 characters: use the space, be substantive and weave in the concrete data points. Hard max 250 characters.",
     "- At most 3 emojis.",
     hashtagRule,
-    "- End with: 'Not financial advice. DYOR.' (you may abbreviate to 'NFA. DYOR.' for replies).",
-    `- Language: ${language === "id" ? "Bahasa Indonesia" : "English"}.`,
+    `- End with a short "not financial advice / do your own research" disclaimer written in ${langName} (English 'NFA. DYOR.' is also acceptable).`,
   ].join("\n");
 
   const replyBlock =
