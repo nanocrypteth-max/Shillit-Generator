@@ -19,6 +19,7 @@ import {
 } from "./gemini.js";
 import { fetchOhlcv } from "./chart.js";
 import xRoutes from "./x/routes.js"; // ADDED: Post-to-X feature (isolated module)
+// import { startScheduler } from "./x/scheduler.js"; // Mode 2 worker — disabled for now
 
 const VALID_TONES: Tone[] = ["hype", "degen", "professional", "ct", "reply"];
 const VALID_LANGS: Lang[] = ["en", "id", "zh"];
@@ -54,6 +55,37 @@ function rateLimit(req: Request, res: Response, next: NextFunction) {
 }
 
 // --- main endpoint: CA in -> market data + generated post out ---
+// ─────────────────────────────────────────────────────────────────────────────
+// FUTURE / TODO — server-side access control for generate (not enforced yet).
+//
+// Right now the wallet-login + pay-per-generate gate lives ONLY in the frontend
+// (UX). It is NOT a backend protection: /api/generate below can still be called
+// directly (curl/Postman) without going through the gate, so a paid gate today
+// is bypassable.
+//
+// To make it real later, verify BEFORE processing generate:
+//   1. Privy auth token  — read `Authorization: Bearer <privy token>`, verify it
+//      against Privy's JWKS / server SDK (needs PRIVY_APP_ID + PRIVY_APP_SECRET).
+//      Reject 401 if invalid/expired.
+//   2. Payment proof      — confirm the user paid for this generate (e.g. a tx
+//      hash to your treasury on the expected chain/amount, or a server-side
+//      credit balance decremented per generate). Reject 402 if unpaid.
+//
+// Wire it as middleware so the generate logic itself stays untouched:
+//   app.post("/api/generate", rateLimit, /* requireGenerateAccess, */ async ...)
+//
+// Stub kept here as the single hook point; currently a pass-through (no-op).
+async function requireGenerateAccess(
+  _req: Request,
+  _res: Response,
+  next: NextFunction,
+) {
+  // TODO: verify Privy token (step 1) + payment proof (step 2); call _res.status(401/402) to block.
+  next();
+}
+void requireGenerateAccess; // referenced so it's kept; not enforced yet
+// ─────────────────────────────────────────────────────────────────────────────
+
 app.post("/api/generate", rateLimit, async (req: Request, res: Response) => {
   const { ca, chain, tone, language, withHashtags, replyTo } = req.body ?? {};
 
@@ -142,4 +174,7 @@ app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.listen(PORT, () => {
   console.log(`\n  shill-gen running:  http://localhost:${PORT}\n`);
+  // Mode 2 scheduler is DISABLED for now (feature not in use yet).
+  // To re-enable later: uncomment the line below (and the import above).
+  // if (process.env.DATABASE_URL) startScheduler();
 });
