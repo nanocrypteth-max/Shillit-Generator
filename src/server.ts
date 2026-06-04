@@ -11,10 +11,17 @@ import express, {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetchMarket, isValidCa } from "./market.js";
-import { generatePost, type PostOptions, type Tone } from "./gemini.js";
+import {
+  generatePost,
+  type PostOptions,
+  type Tone,
+  type Lang,
+} from "./gemini.js";
 import { fetchOhlcv } from "./chart.js";
+import xRoutes from "./x/routes.js"; // ADDED: Post-to-X feature (isolated module)
 
 const VALID_TONES: Tone[] = ["hype", "degen", "professional", "ct", "reply"];
+const VALID_LANGS: Lang[] = ["en", "id", "zh"];
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8787);
@@ -65,7 +72,7 @@ app.post("/api/generate", rateLimit, async (req: Request, res: Response) => {
 
     const opts: PostOptions = {
       tone: VALID_TONES.includes(tone) ? tone : "hype",
-      language: language === "id" ? "id" : "en",
+      language: VALID_LANGS.includes(language) ? language : "en",
       withHashtags: withHashtags === true,
       replyTo: typeof replyTo === "string" ? replyTo : undefined,
     };
@@ -126,6 +133,9 @@ app.get("/api/chart", rateLimit, async (req: Request, res: Response) => {
 });
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+// ADDED: Post-to-X endpoints (/api/x/*). Isolated; does not touch existing routes.
+app.use(xRoutes);
 
 // Serve frontend (public/index.html) for everything else.
 app.use(express.static(path.join(__dirname, "..", "public")));
