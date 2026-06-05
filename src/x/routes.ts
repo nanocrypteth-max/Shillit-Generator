@@ -48,6 +48,8 @@ const router = Router();
 
 // App-level (server) settings — NOT per user.
 function appCfg() {
+  console.log("FRONTEND_ORIGIN:", process.env.FRONTEND_ORIGIN);
+
   return {
     frontendOrigin: process.env.FRONTEND_ORIGIN ?? "http://localhost:5173",
     cookieSecure: process.env.COOKIE_SECURE === "true",
