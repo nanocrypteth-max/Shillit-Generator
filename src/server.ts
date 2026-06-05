@@ -3,7 +3,6 @@
 // port -> no CORS setup, no separate frontend build. Just run and open browser.
 
 import "dotenv/config";
-import cors from "cors";
 import express, {
   type Request,
   type Response,
@@ -23,24 +22,12 @@ import xRoutes from "./x/routes.js"; // ADDED: Post-to-X feature (isolated modul
 // import { startScheduler } from "./x/scheduler.js"; // Mode 2 worker — disabled for now
 
 const VALID_TONES: Tone[] = ["hype", "degen", "professional", "ct", "reply"];
-const VALID_LANGS: Lang[] = ["en", "id", "zh"];
+const VALID_LANGS: Lang[] = ["en", "zh", "ja", "de"];
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8787);
 
 const app = express();
-
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? "http://localhost:5173";
-
-app.use(
-  cors({
-    origin: FRONTEND_ORIGIN,
-    credentials: true,
-  }),
-);
-
-app.options("*", cors());
-
 app.use(express.json({ limit: "16kb" }));
 
 // --- minimal per-IP rate limiter: protects your Gemini quota/billing ---
@@ -186,9 +173,7 @@ app.use(xRoutes);
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.listen(PORT, () => {
-  console.log(
-    `\n  shill-gen running:  https://shillit-generator.onrender.com\n`,
-  );
+  console.log(`\n  shill-gen running:  http://localhost:${PORT}\n`);
   // Mode 2 scheduler is DISABLED for now (feature not in use yet).
   // To re-enable later: uncomment the line below (and the import above).
   // if (process.env.DATABASE_URL) startScheduler();

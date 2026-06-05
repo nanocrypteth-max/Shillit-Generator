@@ -49,7 +49,9 @@ async function runJob(job: Job): Promise<void> {
     });
     const { url } = await postTextForSession(job.sessionId, post);
     await completeRun(job.id, job.intervalSec, url);
-    console.log(`[scheduler] job ${job.id} posted (${job.remaining - 1} left): ${url}`);
+    console.log(
+      `[scheduler] job ${job.id} posted (${job.remaining - 1} left): ${url}`,
+    );
   } catch (e: any) {
     // Auto-pause on ANY failure — never hammer X/Gemini in a retry loop.
     const reason =

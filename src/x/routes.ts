@@ -42,14 +42,12 @@ import { freshAccessToken, postTextForSession } from "./poster.js";
 const MIN_INTERVAL_SEC = Number(process.env.SCHED_MIN_INTERVAL_SEC ?? 300); // floor: 5 min
 const MAX_POSTS = Number(process.env.SCHED_MAX_POSTS ?? 100);
 const VALID_TONES = ["hype", "degen", "professional", "ct", "reply"];
-const VALID_LANGS = ["en", "id", "zh"];
+const VALID_LANGS = ["en", "zh", "ja", "de"];
 
 const router = Router();
 
 // App-level (server) settings — NOT per user.
 function appCfg() {
-  console.log("FRONTEND_ORIGIN:", process.env.FRONTEND_ORIGIN);
-
   return {
     frontendOrigin: process.env.FRONTEND_ORIGIN ?? "http://localhost:5173",
     cookieSecure: process.env.COOKIE_SECURE === "true",

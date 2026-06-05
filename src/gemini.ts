@@ -12,7 +12,7 @@ import type { TokenMarket } from "./market.js";
 const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 
 export type Tone = "hype" | "degen" | "professional" | "ct" | "reply";
-export type Lang = "en" | "id" | "zh";
+export type Lang = "en" | "zh" | "ja" | "de";
 
 export interface PostOptions {
   tone?: Tone;
@@ -83,11 +83,13 @@ export async function generatePost(
     : "- Do NOT use any hashtags.";
 
   const langName =
-    language === "id"
-      ? "Bahasa Indonesia"
-      : language === "zh"
-        ? "Chinese (简体中文)"
-        : "English";
+    language === "zh"
+      ? "Chinese (简体中文)"
+      : language === "ja"
+        ? "Japanese (日本語)"
+        : language === "de"
+          ? "German (Deutsch)"
+          : "English";
 
   const rules = [
     `OUTPUT LANGUAGE: Write the ENTIRE post in ${langName}. Every word must be in ${langName}, EXCEPT the token ticker ($${m.symbol}) and hashtags. This rule overrides all others.`,
