@@ -40,13 +40,33 @@ const DS_TOKENS = "https://api.dexscreener.com/latest/dex/tokens";
 const CACHE_TTL_MS = 30_000;
 const cache = new Map<string, { at: number; data: TokenMarket }>();
 
-async function getJson(url: string, ms = 5000): Promise<any> {
-  const res = await fetch(url, {
-    signal: AbortSignal.timeout(ms),
-    headers: { accept: "application/json" },
-  });
-  if (!res.ok) throw new Error(`${new URL(url).hostname} ${res.status}`);
-  return res.json();
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+
+// Fetch JSON with retry + exponential backoff. Retries on 429 (rate limit),
+// 5xx, and network/timeout errors — the shared-IP DexScreener limit on free
+// hosts (Render) makes transient 429s common.
+async function getJson(url: string, ms = 6000): Promise<any> {
+  const host = new URL(url).hostname;
+  let lastStatus = 0;
+  for (let attempt = 0; attempt <= 3; attempt++) {
+    if (attempt > 0)
+      await sleep(300 * 2 ** (attempt - 1) + Math.random() * 200); // 0.4s,0.9s,1.8s
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        signal: AbortSignal.timeout(ms),
+        headers: { accept: "application/json" },
+      });
+    } catch {
+      lastStatus = 0; // timeout / network -> retry
+      continue;
+    }
+    if (res.ok) return res.json();
+    lastStatus = res.status;
+    if (!RETRYABLE.has(res.status)) throw new Error(`${host} ${res.status}`);
+  }
+  throw new Error(`${host} ${lastStatus || "timeout"}`);
 }
 
 async function fromDexScreener(
