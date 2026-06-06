@@ -51,7 +51,8 @@ function getPool(): Promise<mysql.Pool> {
 
 async function init(): Promise<mysql.Pool> {
   const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL missing !");
+  if (!url)
+    throw new Error("DATABASE_URL missing (mysql://user:pass@host:3306/db)");
 
   // Redacted log so you can confirm host/port/db without leaking the password.
   try {
@@ -458,4 +459,28 @@ export function takeFlow(sid: string, state: string): string | null {
   if (!f || Date.now() - f.at > FLOW_TTL) return null;
   if (f.state !== state) return null;
   return f.verifier;
+}
+
+// ---------- sid -> owner mapping (in-memory) ----------
+// Maps a browser cookie session to the verified durable owner key (e.g. a Privy
+// user id). Set on authenticated requests; read during the OAuth popup flow
+// (login/callback) which cannot carry an Authorization header.
+interface OwnerRec {
+  owner: string;
+  at: number;
+}
+const owners = new Map<string, OwnerRec>();
+const OWNER_TTL = 60 * 60_000; // 1h
+
+export function setOwner(sid: string, owner: string): void {
+  owners.set(sid, { owner, at: Date.now() });
+}
+export function getOwner(sid: string): string | null {
+  const r = owners.get(sid);
+  if (!r) return null;
+  if (Date.now() - r.at > OWNER_TTL) {
+    owners.delete(sid);
+    return null;
+  }
+  return r.owner;
 }

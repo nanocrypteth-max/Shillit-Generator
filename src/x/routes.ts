@@ -1,10 +1,16 @@
 // x/routes.ts
 // "Post to X" endpoints under /api/x/*. Mounted additively in server.ts.
 //
-// CREDENTIALS ARE PER-USER: each user supplies their own X app (Client ID/Secret/
-// Callback/Scopes) via POST /api/x/config. They are stored encrypted at rest
-// (TOKEN_ENC_KEY is the server master key) and used for that session's OAuth.
-// App-level env: TOKEN_ENC_KEY, FRONTEND_ORIGIN, COOKIE_SECURE, X_DEFAULT_CALLBACK_URL.
+// IDENTITY: durable data (X app credentials + tokens) is keyed by an "owner":
+//   - If the request carries a valid Privy access token (Authorization: Bearer …),
+//     owner = "privy:<privy user id>"  -> tied to the user's wallet/login, so the
+//     same user gets their saved keys + connection back on any device without
+//     re-entering credentials or re-authorizing.
+//   - Otherwise owner = "sid:<cookie session>" (fallback when Privy isn't set up).
+// The cookie session id (sg_sid) is still used for the transient OAuth PKCE flow
+// (login -> callback), which is a top-level navigation that can't send a header.
+// App-level env: TOKEN_ENC_KEY, FRONTEND_ORIGIN, COOKIE_SECURE, X_DEFAULT_CALLBACK_URL,
+//                PRIVY_APP_ID, PRIVY_VERIFICATION_KEY.
 
 import { Router, type Request, type Response } from "express";
 import crypto from "node:crypto";
@@ -14,18 +20,16 @@ import {
   exchangeCode,
   getMe,
   makePkce,
-  postTweet,
   randomState,
-  refreshToken,
   revoke,
   XError,
-  type TokenSet,
 } from "./oauth.js";
 import {
   clearConfig,
   clearTokens,
   createJob,
   deleteJob,
+  getOwner,
   listJobs,
   loadConfig,
   loadPublicConfig,
@@ -34,10 +38,12 @@ import {
   saveTokens,
   setFlow,
   setJobStatus,
+  setOwner,
   takeFlow,
   type XAppConfig,
 } from "./store.js";
-import { freshAccessToken, postTextForSession } from "./poster.js";
+import { postTextForSession } from "./poster.js";
+import { verifyPrivyToken } from "./privy.js";
 
 const MIN_INTERVAL_SEC = Number(process.env.SCHED_MIN_INTERVAL_SEC ?? 300); // floor: 5 min
 const MAX_POSTS = Number(process.env.SCHED_MAX_POSTS ?? 100);
@@ -46,12 +52,10 @@ const VALID_LANGS = ["en", "zh", "ja", "de"];
 
 const router = Router();
 
-// App-level (server) settings — NOT per user.
 function appCfg() {
   return {
     frontendOrigin: process.env.FRONTEND_ORIGIN ?? "http://localhost:5173",
     cookieSecure: process.env.COOKIE_SECURE === "true",
-    // Default callback shown to the user to prefill the form / register in their X app.
     defaultCallback:
       process.env.X_DEFAULT_CALLBACK_URL ??
       `${process.env.FRONTEND_ORIGIN ?? "http://localhost:5173"}/api/x/callback`,
@@ -88,10 +92,39 @@ function ensureSid(req: Request, res: Response, secure: boolean): string {
 function readSid(req: Request): string | null {
   return parseCookies(req.headers.cookie)[COOKIE] ?? null;
 }
+function bearer(req: Request): string | null {
+  const h = req.headers.authorization;
+  if (!h || !h.startsWith("Bearer ")) return null;
+  const t = h.slice(7).trim();
+  return t || null;
+}
 
-// Load this session's X app credentials; throw if the user hasn't configured them.
-async function requireConfig(sid: string): Promise<XAppConfig> {
-  const cfg = await loadConfig(sid);
+// Resolve the durable owner key for this request. Always ensures a cookie session
+// (needed for the OAuth popup flow). When a valid Privy token is present, the owner
+// is the Privy user id and we remember sid->owner so the popup flow can resolve it.
+async function ownerFromRequest(req: Request, res: Response): Promise<string> {
+  const a = appCfg();
+  const sid = ensureSid(req, res, a.cookieSecure);
+  const token = bearer(req);
+  if (token) {
+    const uid = await verifyPrivyToken(token);
+    if (uid) {
+      const owner = `privy:${uid}`;
+      setOwner(sid, owner);
+      return owner;
+    }
+  }
+  return `sid:${sid}`;
+}
+
+// Owner key during the OAuth popup flow (no header available): use the mapping set
+// by the prior authenticated call, else fall back to the cookie session.
+function ownerForFlow(sid: string): string {
+  return getOwner(sid) ?? `sid:${sid}`;
+}
+
+async function requireConfig(owner: string): Promise<XAppConfig> {
+  const cfg = await loadConfig(owner);
   if (!cfg)
     throw new XError(
       "x_not_configured",
@@ -101,25 +134,29 @@ async function requireConfig(sid: string): Promise<XAppConfig> {
   return cfg;
 }
 
-// Valid access token for posting now lives in poster.ts (shared with scheduler).
+// ---- FLOW-INIT: bind this cookie session to the verified owner before connecting ----
+router.post("/api/x/flow-init", async (req, res) => {
+  const owner = await ownerFromRequest(req, res);
+  res.json({ ok: true, scoped: owner.startsWith("privy:") });
+});
 
-// ---- CONFIG: get (non-secret), save, clear the user's X app credentials ----
+// ---- CONFIG ----
 router.get("/api/x/config", async (req, res) => {
   const a = appCfg();
-  const sid = readSid(req);
-  const pub = sid ? await loadPublicConfig(sid) : null;
+  const owner = await ownerFromRequest(req, res);
+  const pub = await loadPublicConfig(owner);
   res.json({
     configured: !!pub,
     clientId: pub?.clientId ?? null,
-    callbackUrl: pub?.callbackUrl ?? a.defaultCallback, // prefill
+    callbackUrl: pub?.callbackUrl ?? a.defaultCallback,
     scopes: pub?.scopes ?? a.defaultScopes,
-    defaultCallback: a.defaultCallback, // the URL they must register in their X app
+    defaultCallback: a.defaultCallback,
   });
 });
 
 router.post("/api/x/config", async (req, res) => {
   const a = appCfg();
-  const sid = ensureSid(req, res, a.cookieSecure);
+  const owner = await ownerFromRequest(req, res);
   const clientId = (req.body?.clientId ?? "").toString().trim();
   const clientSecret = (req.body?.clientSecret ?? "").toString().trim();
   const callbackUrl = (req.body?.callbackUrl ?? a.defaultCallback)
@@ -134,7 +171,7 @@ router.post("/api/x/config", async (req, res) => {
     });
   }
   try {
-    new URL(callbackUrl); // validate it's a URL
+    new URL(callbackUrl);
   } catch {
     return res.status(400).json({
       error: "bad_callback",
@@ -148,34 +185,33 @@ router.post("/api/x/config", async (req, res) => {
     });
   }
 
-  await saveConfig(sid, { clientId, clientSecret, callbackUrl, scopes });
+  await saveConfig(owner, { clientId, clientSecret, callbackUrl, scopes });
   res.json({ ok: true, callbackUrl });
 });
 
 router.delete("/api/x/config", async (req, res) => {
-  const sid = readSid(req);
-  if (sid) {
-    await clearConfig(sid);
-    await clearTokens(sid);
-  }
+  const owner = await ownerFromRequest(req, res);
+  await clearConfig(owner);
+  await clearTokens(owner);
   res.json({ ok: true });
 });
 
 // ---- STATUS ----
 router.get("/api/x/status", async (req, res) => {
-  const sid = readSid(req);
-  const rec = sid ? await loadTokens(sid) : null;
-  const configured = sid ? !!(await loadPublicConfig(sid)) : false;
+  const owner = await ownerFromRequest(req, res);
+  const rec = await loadTokens(owner);
+  const configured = !!(await loadPublicConfig(owner));
   res.json({ connected: !!rec, username: rec?.username ?? null, configured });
 });
 
-// ---- LOGIN: start OAuth using the user's stored credentials ----
+// ---- LOGIN ----
 router.get("/api/x/login", async (req, res) => {
   const a = appCfg();
   const sid = ensureSid(req, res, a.cookieSecure);
+  const owner = ownerForFlow(sid);
   let cfg: XAppConfig;
   try {
-    cfg = await requireConfig(sid);
+    cfg = await requireConfig(owner);
   } catch {
     return res
       .status(400)
@@ -218,9 +254,10 @@ router.get("/api/x/callback", async (req, res) => {
   const verifier = takeFlow(sid, state);
   if (!verifier) return closePopup(false, "invalid state");
 
+  const owner = ownerForFlow(sid);
   let cfg: XAppConfig;
   try {
-    cfg = await requireConfig(sid);
+    cfg = await requireConfig(owner);
   } catch {
     return closePopup(false, "not configured");
   }
@@ -234,7 +271,7 @@ router.get("/api/x/callback", async (req, res) => {
       redirectUri: cfg.callbackUrl,
     });
     const me = await getMe(tokens.accessToken);
-    await saveTokens(sid, me.username, me.id, tokens);
+    await saveTokens(owner, me.username, me.id, tokens);
     return closePopup(true);
   } catch (e: any) {
     console.error(
@@ -248,12 +285,7 @@ router.get("/api/x/callback", async (req, res) => {
 
 // ---- POST ----
 router.post("/api/x/post", async (req, res) => {
-  const sid = readSid(req);
-  if (!sid)
-    return res.status(401).json({
-      error: "not_connected",
-      message: "Connect your X account first.",
-    });
+  const owner = await ownerFromRequest(req, res);
 
   const text = (req.body?.text ?? "").toString();
   if (!text.trim())
@@ -266,13 +298,12 @@ router.post("/api/x/post", async (req, res) => {
       .json({ error: "too_long", message: "Tweet exceeds 280 characters." });
 
   try {
-    const { username, url, id } = await postTextForSession(sid, text);
+    const { username, url, id } = await postTextForSession(owner, text);
     return res.json({ id, username, url });
   } catch (e: any) {
     if (e instanceof XError) {
       if (e.code === "post_error") {
         console.error("[x/post]", e.status, e.detail);
-        // 402 = X API credit balance empty (pay-per-use).
         if (e.status === 402) {
           return res.status(402).json({
             error: "no_credits",
@@ -299,34 +330,26 @@ router.post("/api/x/post", async (req, res) => {
 
 // ---- LOGOUT (tokens only; keeps stored credentials) ----
 router.post("/api/x/logout", async (req, res) => {
-  const sid = readSid(req);
-  if (sid) {
-    const rec = await loadTokens(sid);
-    if (rec?.tokens.accessToken) {
-      const cfg = await loadConfig(sid);
-      if (cfg) {
-        try {
-          await revoke(rec.tokens.accessToken, cfg.clientId, cfg.clientSecret);
-        } catch {
-          /* ignore */
-        }
+  const owner = await ownerFromRequest(req, res);
+  const rec = await loadTokens(owner);
+  if (rec?.tokens.accessToken) {
+    const cfg = await loadConfig(owner);
+    if (cfg) {
+      try {
+        await revoke(rec.tokens.accessToken, cfg.clientId, cfg.clientSecret);
+      } catch {
+        /* ignore */
       }
     }
-    await clearTokens(sid);
   }
+  await clearTokens(owner);
   res.json({ ok: true });
 });
 
 // ---- Mode 2: scheduled auto-post jobs ----
 router.post("/api/x/jobs", async (req, res) => {
-  const sid = readSid(req);
-  if (!sid)
-    return res.status(401).json({
-      error: "not_connected",
-      message: "Connect your X account first.",
-    });
-  // Worker posts on the user's behalf later -> require tokens + config now.
-  if (!(await loadTokens(sid)))
+  const owner = await ownerFromRequest(req, res);
+  if (!(await loadTokens(owner)))
     return res.status(401).json({
       error: "not_connected",
       message: "Connect your X account first.",
@@ -361,7 +384,7 @@ router.post("/api/x/jobs", async (req, res) => {
   }
 
   const id = await createJob({
-    sid,
+    sid: owner,
     ca,
     chain,
     tone,
@@ -374,16 +397,15 @@ router.post("/api/x/jobs", async (req, res) => {
 });
 
 router.get("/api/x/jobs", async (req, res) => {
-  const sid = readSid(req);
+  const owner = await ownerFromRequest(req, res);
   res.json({
-    jobs: sid ? await listJobs(sid) : [],
+    jobs: await listJobs(owner),
     limits: { minIntervalSec: MIN_INTERVAL_SEC, maxPosts: MAX_POSTS },
   });
 });
 
 router.patch("/api/x/jobs/:id", async (req, res) => {
-  const sid = readSid(req);
-  if (!sid) return res.status(401).json({ error: "not_connected" });
+  const owner = await ownerFromRequest(req, res);
   const status = req.body?.status;
   if (status !== "active" && status !== "paused") {
     return res.status(400).json({
@@ -391,7 +413,7 @@ router.patch("/api/x/jobs/:id", async (req, res) => {
       message: "status must be 'active' or 'paused'.",
     });
   }
-  const ok = await setJobStatus(req.params.id, sid, status);
+  const ok = await setJobStatus(req.params.id, owner, status);
   if (!ok)
     return res
       .status(404)
@@ -400,9 +422,8 @@ router.patch("/api/x/jobs/:id", async (req, res) => {
 });
 
 router.delete("/api/x/jobs/:id", async (req, res) => {
-  const sid = readSid(req);
-  if (!sid) return res.status(401).json({ error: "not_connected" });
-  const ok = await deleteJob(req.params.id, sid);
+  const owner = await ownerFromRequest(req, res);
+  const ok = await deleteJob(req.params.id, owner);
   res.json({ ok });
 });
 
