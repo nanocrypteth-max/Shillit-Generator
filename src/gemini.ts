@@ -108,8 +108,8 @@ export async function generatePost(
     "- Use ONLY the numbers in DATA. Never invent price, partnerships, exchange listings, roadmap, audits, or holder counts.",
     "- Never promise or imply guaranteed returns, 'x100', 'cannot lose', or price targets.",
     tone === "reply"
-      ? "- Keep it under 220 characters (it's a reply)."
-      : "- Aim for 180-250 characters: use the space, be substantive and weave in the concrete data points. Hard max 250 characters.",
+      ? "- Keep the whole reply UNDER 200 characters."
+      : "- LENGTH LIMIT: the ENTIRE post — including hashtags AND the disclaimer — MUST be 280 characters or fewer. Aim for 200-260. NEVER exceed 280 characters total. If needed, drop hashtags or shorten wording to fit.",
     "- At most 3 emojis.",
     hashtagRule,
     `- End with a short "not financial advice / do your own research" disclaimer written in ${langName} (English 'NFA. DYOR.' is also acceptable).`,
@@ -139,5 +139,14 @@ export async function generatePost(
 
   const text = (res.text ?? "").trim();
   if (!text) throw new Error("empty_generation");
+  // Safety net: guarantee <= 280 chars so the X post never gets rejected.
+  if (text.length > 280) {
+    return (
+      text
+        .slice(0, 279)
+        .replace(/\s+\S*$/, "")
+        .trim() + "…"
+    );
+  }
   return text;
 }

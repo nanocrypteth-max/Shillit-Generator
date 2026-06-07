@@ -274,15 +274,21 @@ export async function loadConfig(sid: string): Promise<XAppConfig | null> {
   });
 }
 
-export async function loadPublicConfig(
-  sid: string,
-): Promise<{ clientId: string; callbackUrl: string; scopes: string } | null> {
+export async function loadPublicConfig(sid: string): Promise<{
+  clientId: string;
+  callbackUrl: string;
+  scopes: string;
+  secretLast3: string | null;
+} | null> {
   const cfg = await loadConfig(sid);
   if (!cfg) return null;
+  // Expose only the last 3 chars of the secret as a UI hint (never the full secret).
+  const last3 = cfg.clientSecret ? cfg.clientSecret.slice(-3) : null;
   return {
     clientId: cfg.clientId,
     callbackUrl: cfg.callbackUrl,
     scopes: cfg.scopes,
+    secretLast3: last3,
   };
 }
 

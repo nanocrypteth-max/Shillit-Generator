@@ -159,6 +159,7 @@ router.get("/api/x/config", async (req, res) => {
     callbackUrl: pub?.callbackUrl ?? a.defaultCallback,
     scopes: pub?.scopes ?? a.defaultScopes,
     defaultCallback: a.defaultCallback,
+    secretLast3: pub?.secretLast3 ?? null,
   });
 });
 

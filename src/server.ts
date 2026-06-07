@@ -19,7 +19,6 @@ import {
 } from "./gemini.js";
 import { fetchOhlcv } from "./chart.js";
 import xRoutes from "./x/routes.js"; // ADDED: Post-to-X feature (isolated module)
-import { env } from "node:process";
 // import { startScheduler } from "./x/scheduler.js"; // Mode 2 worker — disabled for now
 
 const VALID_TONES: Tone[] = [
@@ -143,6 +142,17 @@ app.post("/api/generate", rateLimit, async (req: Request, res: Response) => {
           "Model returned nothing (possibly a safety filter). Try a different tone.",
       });
     }
+    // DexScreener rate-limited / unreachable (after retries) -> friendly, retryable message.
+    if (
+      msg.includes("dexscreener") ||
+      msg.includes("429") ||
+      msg.includes("timeout")
+    ) {
+      return res.status(503).json({
+        error: "market_unavailable",
+        message: "Dexscreener is not ready, Please try again in a moment",
+      });
+    }
     console.error("[generate]", msg);
     return res.status(502).json({ error: "upstream", message: msg });
   }
@@ -182,7 +192,7 @@ app.use(xRoutes);
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.listen(PORT, () => {
-  console.log(`\n  shill-gen running:  ${process.env.FRONTEND_ORIGIN}\n`);
+  console.log(`\n  shill-gen running:  http://localhost:${PORT}\n`);
   // Mode 2 scheduler is DISABLED for now (feature not in use yet).
   // To re-enable later: uncomment the line below (and the import above).
   // if (process.env.DATABASE_URL) startScheduler();
