@@ -11,7 +11,14 @@ import type { TokenMarket } from "./market.js";
 
 const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 
-export type Tone = "hype" | "degen" | "professional" | "ct" | "reply";
+export type Tone =
+  | "hype"
+  | "degen"
+  | "professional"
+  | "ct"
+  | "reply"
+  | "analysis"
+  | "risk";
 export type Lang = "en" | "zh" | "ja" | "de";
 
 export interface PostOptions {
@@ -53,6 +60,9 @@ const TONE_GUIDE: Record<Tone, string> = {
   ct: "Crypto Twitter (CT) native: punchy, lowercase-leaning, short lines. CT slang ok (gm, ser, anon, ape in, wagmi) used sparingly. Lead with the ticker.",
   reply:
     "A short REPLY/COMMENT to the post in REPLY_CONTEXT. React naturally to that post and tie in this token. Do NOT restate the whole post. 1-2 short sentences.",
+  analysis:
+    "Objective analyst voice. Break down what the on-chain numbers actually say (market cap/FDV, liquidity, 24h volume, buy/sell pressure, age). Neutral and factual — state observations, not hype or price predictions. No targets, no 'to the moon'.",
+  risk: "Risk-assessment voice. Soberly flag the RISKS implied by the data: low liquidity, thin/again-st volume, lopsided buys vs sells, very new pair/age, concentration. Be cautionary and balanced, not fear-mongering and not promotional. Make clear these are observations, not advice.",
 };
 
 export async function generatePost(
@@ -116,7 +126,10 @@ export async function generatePost(
     model: MODEL,
     contents: `${rules}\n\nDATA:\n${facts}${replyBlock}\n\nWrite it now:`,
     config: {
-      temperature: tone === "professional" ? 0.6 : 0.9,
+      temperature:
+        tone === "professional" || tone === "analysis" || tone === "risk"
+          ? 0.55
+          : 0.9,
       // 2.5-flash has thinking ON by default; thinking tokens eat maxOutputTokens
       // and truncate the post (cutting off hashtags + disclaimer). Disable it.
       thinkingConfig: { thinkingBudget: 0 },

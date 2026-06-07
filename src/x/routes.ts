@@ -47,7 +47,15 @@ import { verifyPrivyToken } from "./privy.js";
 
 const MIN_INTERVAL_SEC = Number(process.env.SCHED_MIN_INTERVAL_SEC ?? 300); // floor: 5 min
 const MAX_POSTS = Number(process.env.SCHED_MAX_POSTS ?? 100);
-const VALID_TONES = ["hype", "degen", "professional", "ct", "reply"];
+const VALID_TONES = [
+  "hype",
+  "degen",
+  "professional",
+  "ct",
+  "reply",
+  "analysis",
+  "risk",
+];
 const VALID_LANGS = ["en", "zh", "ja", "de"];
 
 const router = Router();
