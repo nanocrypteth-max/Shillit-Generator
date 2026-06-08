@@ -18,6 +18,7 @@ import {
   type Lang,
 } from "./gemini.js";
 import { fetchOhlcv } from "./chart.js";
+import { fetchSecurity } from "./api/security.js";
 import xRoutes from "./x/routes.js"; // ADDED: Post-to-X feature (isolated module)
 // import { startScheduler } from "./x/scheduler.js"; // Mode 2 worker — disabled for now
 
@@ -184,6 +185,37 @@ app.get("/api/chart", rateLimit, async (req: Request, res: Response) => {
 });
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+// Token security report for Risk Mode (GoPlus-backed).
+app.get("/api/security", rateLimit, async (req: Request, res: Response) => {
+  const ca = String(req.query.ca ?? "");
+  const chain = String(req.query.chain ?? "");
+  if (!isValidCa(ca)) {
+    return res.status(400).json({
+      error: "invalid_ca",
+      message: "Provide a valid contract address.",
+    });
+  }
+  try {
+    const report = await fetchSecurity(ca, chain);
+    return res.json(report);
+  } catch (e: any) {
+    const msg = e?.message ?? "security_unavailable";
+    if (
+      msg.includes("goplus") ||
+      msg.includes("429") ||
+      msg.includes("timeout")
+    ) {
+      return res.status(503).json({
+        error: "security_unavailable",
+        message: "Security data is not ready, please try again in a moment",
+      });
+    }
+    return res
+      .status(502)
+      .json({ error: "security_unavailable", message: msg });
+  }
+});
 
 // ADDED: Post-to-X endpoints (/api/x/*). Isolated; does not touch existing routes.
 app.use(xRoutes);
