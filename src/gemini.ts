@@ -61,7 +61,7 @@ const TONE_GUIDE: Record<Tone, string> = {
   reply:
     "A short REPLY/COMMENT to the post in REPLY_CONTEXT. React naturally to that post and tie in this token. Do NOT restate the whole post. 1-2 short sentences.",
   analysis:
-    "Objective analyst voice. Break down what the on-chain numbers actually say (market cap/FDV, liquidity, 24h volume, buy/sell pressure, age). Neutral and factual — state observations, not hype or price predictions. No targets, no 'to the moon'.",
+    "Objective analyst voice. Break down what the on-chain numbers actually say (market cap/FDV, liquidity, 24h volume, buy/sell pressure, age). You MUST end with a clear directional read on the token — state explicitly whether the data looks BULLISH or BEARISH (one of those two words) and why, in a few words. This is a read of the current data, NOT a price target or guarantee. No 'to the moon'.",
   risk: "Risk-assessment voice. Soberly flag the RISKS implied by the data: low liquidity, thin/again-st volume, lopsided buys vs sells, very new pair/age, concentration. Be cautionary and balanced, not fear-mongering and not promotional. Make clear these are observations, not advice.",
 };
 
@@ -108,8 +108,8 @@ export async function generatePost(
     "- Use ONLY the numbers in DATA. Never invent price, partnerships, exchange listings, roadmap, audits, or holder counts.",
     "- Never promise or imply guaranteed returns, 'x100', 'cannot lose', or price targets.",
     tone === "reply"
-      ? "- Keep the whole reply UNDER 200 characters."
-      : "- LENGTH LIMIT: the ENTIRE post — including hashtags AND the disclaimer — MUST be 280 characters or fewer. Aim for 200-260. NEVER exceed 280 characters total. If needed, drop hashtags or shorten wording to fit.",
+      ? "- Keep the whole reply UNDER 180 characters."
+      : "- LENGTH LIMIT: keep the post (content + hashtags + disclaimer) to 235 characters or fewer. Aim for 170-220. A fixed attribution line is added automatically afterwards, so do NOT add one yourself and do NOT mention Shillit AI.",
     "- At most 3 emojis.",
     hashtagRule,
     `- End with a short "not financial advice / do your own research" disclaimer written in ${langName} (English 'NFA. DYOR.' is also acceptable).`,
@@ -139,14 +139,18 @@ export async function generatePost(
 
   const text = (res.text ?? "").trim();
   if (!text) throw new Error("empty_generation");
-  // Safety net: guarantee <= 280 chars so the X post never gets rejected.
-  if (text.length > 280) {
-    return (
-      text
-        .slice(0, 279)
+
+  // #1 Attribution appended to every generated post. Reserve room so the
+  // body + attribution together never exceed 280 (X) characters.
+  const ATTRIB = "The Content was created by Shillit AI";
+  const bodyMax = 280 - ATTRIB.length - 2; // 2 for the "\n\n" separator
+  let body = text;
+  if (body.length > bodyMax) {
+    body =
+      body
+        .slice(0, bodyMax - 1)
         .replace(/\s+\S*$/, "")
-        .trim() + "…"
-    );
+        .trim() + "…";
   }
-  return text;
+  return `${body}\n\n${ATTRIB}`;
 }
